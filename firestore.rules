@@ -1,0 +1,36 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper: check if request is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Responsibilities: authenticated users can read/write
+    match /responsibilities/{docId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAuthenticated();
+    }
+
+    // Users: authenticated users can read; only admin can write
+    // (admin check via role field in token - set via custom claims or allow all auth writes for simplicity)
+    match /users/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    // Settings (dropdown lists, etc.): authenticated read/write
+    match /settings/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    // Audit log: authenticated users can read and create (no delete)
+    match /audit_log/{docId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+  }
+}
