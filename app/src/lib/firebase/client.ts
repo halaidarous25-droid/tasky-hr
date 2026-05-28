@@ -93,17 +93,43 @@ export function subscribeToAuthState(
     // Fetch user profile from Firestore by uid
     try {
       const snapshot = await getDocs(collection(db!, 'users'));
-      const userData = snapshot.docs
+      let userData = snapshot.docs
         .map((d) => d.data() as User)
         .find((u) => u.uid === fbUser.uid);
+
+      // Fallback: match by email → username if uid not found in Firestore
+      if (!userData && fbUser.email) {
+        const username = fbUser.email.replace('@hr-system.app', '');
+        userData = snapshot.docs
+          .map((d) => d.data() as User)
+          .find((u) => u.username === username);
+        if (!userData) {
+          // Last resort: use default user profile
+          const defaultUser = getDefaultUsers().find((u) => u.username === username);
+          if (defaultUser) userData = { ...defaultUser, uid: fbUser.uid };
+        }
+      }
+
       if (userData) {
-        setCachedUser(userData);
-        cb(userData);
+        const userWithUid = { ...userData, uid: fbUser.uid };
+        setCachedUser(userWithUid);
+        cb(userWithUid);
       } else {
         cb(null);
       }
     } catch (e) {
       console.error('Failed to load user profile:', e);
+      // Fallback on Firestore error
+      if (fbUser.email) {
+        const username = fbUser.email.replace('@hr-system.app', '');
+        const defaultUser = getDefaultUsers().find((u) => u.username === username);
+        if (defaultUser) {
+          const fallback = { ...defaultUser, uid: fbUser.uid };
+          setCachedUser(fallback);
+          cb(fallback);
+          return;
+        }
+      }
       cb(null);
     }
   });
@@ -121,23 +147,39 @@ export async function loginUser(
     const email = toFirebaseEmail(username);
     const cred = await signInWithEmailAndPassword(auth!, email, password);
 
-    // Fetch user profile from Firestore
-    const snapshot = await getDocs(collection(db!, 'users'));
-    const userData = snapshot.docs
-      .map((d) => d.data() as User)
-      .find((u) => u.username === username.trim());
+    // Try to fetch user profile from Firestore
+    // Falls back to default profile if Firestore is temporarily unavailable
+    // (auth token propagation can be async on first sign-in)
+    let userData: User | undefined;
+    try {
+      const snapshot = await getDocs(collection(db!, 'users'));
+      userData = snapshot.docs
+        .map((d) => d.data() as User)
+        .find((u) => u.username === username.trim());
+
+      // Patch uid onto Firestore document if missing
+      if (userData && !userData.uid) {
+        const userDoc = snapshot.docs.find((d) => (d.data() as User).username === username.trim());
+        if (userDoc) {
+          await updateDoc(doc(db!, 'users', userDoc.id), { uid: cred.user.uid });
+        }
+      }
+    } catch (firestoreErr) {
+      console.warn('Firestore lookup failed during login, using fallback:', firestoreErr);
+    }
+
+    // Fallback: build user from hardcoded defaults if Firestore unavailable
+    if (!userData) {
+      const defaultUser = getDefaultUsers().find((u) => u.username === username.trim());
+      if (defaultUser) {
+        userData = { ...defaultUser, uid: cred.user.uid };
+        console.warn('Using default user profile as Firestore fallback');
+      }
+    }
 
     if (!userData) {
       await signOut(auth!);
       return { success: false, error: 'لم يتم العثور على بيانات المستخدم' };
-    }
-
-    // Patch uid onto user (update in Firestore if needed)
-    if (!userData.uid) {
-      const userDoc = snapshot.docs.find((d) => (d.data() as User).username === username.trim());
-      if (userDoc) {
-        await updateDoc(doc(db!, 'users', userDoc.id), { uid: cred.user.uid });
-      }
     }
 
     const user = { ...userData, uid: cred.user.uid };
