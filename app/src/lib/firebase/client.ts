@@ -253,10 +253,11 @@ export async function getUsers(): Promise<User[]> {
   try {
     const snap = await getDocs(collection(db!, 'users'));
     const users = snap.docs.map((d) => d.data() as User);
-    return users.length > 0 ? users : getDefaultUsers();
+    // Return empty array (not defaults) so AppContext seeding triggers correctly
+    return users;
   } catch (e) {
     console.error('getUsers failed:', e);
-    return getDefaultUsers();
+    return [];
   }
 }
 
@@ -328,13 +329,21 @@ export async function addAuditLog(entry: AuditEntry): Promise<boolean> {
 
 // ─── Seed initial data (first deploy) ────────────────────────
 export async function seedInitialUsersToFirebase(users: User[]): Promise<void> {
-  if (!db) return;
+  if (!db || !auth) return;
   try {
     const snap = await getDocs(collection(db, 'users'));
     if (snap.size > 0) return; // Already seeded
+
     for (const user of users) {
-      await createFirebaseAuthUser(user.username, user.password || '123456');
-      await setDoc(doc(db, 'users', String(user.id)), user);
+      // 1. Create Firebase Auth account
+      const uid = await createFirebaseAuthUser(user.username, user.password || '123456');
+      // 2. Save Firestore document with uid
+      const userWithUid = {
+        ...user,
+        uid: uid && uid !== 'existing' ? uid : user.uid,
+      };
+      await setDoc(doc(db, 'users', String(user.id)), userWithUid);
+      console.log(`Seeded user: ${user.username}`);
     }
   } catch (e) {
     console.warn('Seed failed (may already exist):', e);
