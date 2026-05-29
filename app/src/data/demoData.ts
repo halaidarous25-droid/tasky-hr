@@ -1,5 +1,4 @@
 import type { Responsibility, AuditEntry, Step } from '@/types';
-import { IMPACT_DATA } from './constants';
 import { createEmptyStep } from '@/components/workflow/cardConfig';
 
 // Migrate old-format steps (without cardType) to new workflow format
@@ -7,73 +6,122 @@ function migrateOldSteps(steps: Array<{ id: number; name: string; description: s
   return steps.map((s) => ({ ...createEmptyStep('process', s.id), name: s.name, description: s.description, channel: s.channel, actionType: s.actionType || 'تنفيذ', notes: s.notes }));
 }
 
-/* ============ حساب الوزن (الأهمية) ============
-   الوزن = مدى أهمية المسؤولية في العمل (0-5)
-   يعتمد على:
-   1. درجة التأثير (1-4): تأثيرها على المنظمة
-   2. حجم العمل (0-5): عدد الطلبات الشهرية
-   
-   الصيغة: الوزن = (تأثير + حجم العمل) / 2
-   مثال: تأثير حرج (4) + طلبات 120 شهرياً (5) = (4+5)/2 = 4.5 من 5
+/* ============ حساب الوزن (الأهمية الاستراتيجية) ============
+   الوزن = مدى أهمية المسؤولية وأثرها على المنظمة (1-5)
+   يعتمد على أربعة محاور:
+   1. درجة التأثير التنظيمي (40%): أثرها على عمليات المنظمة
+   2. حجم الطلبات الشهرية (25%): الحجم التشغيلي الفعلي
+   3. ضغط مستوى الخدمة SLA (20%): الحساسية الزمنية للتنفيذ
+   4. تنوع قنوات الاستلام (15%): اتساع نطاق الخدمة
 */
-function calcWeight(impact: string, avgMonthlyRequests: number): number {
-  const impactScore = IMPACT_DATA[impact]?.score || 1;
-  let volumeScore = 1;
-  if (avgMonthlyRequests >= 101) volumeScore = 5;
-  else if (avgMonthlyRequests >= 61) volumeScore = 4;
-  else if (avgMonthlyRequests >= 31) volumeScore = 3;
-  else if (avgMonthlyRequests >= 11) volumeScore = 2;
-  else if (avgMonthlyRequests >= 1) volumeScore = 1;
-  const raw = (impactScore + volumeScore) / 2;
+function calcWeight(
+  impact: string,
+  avgMonthlyRequests: number,
+  usedChannels: string[],
+  slaHours?: number
+): number {
+  // 1. درجة التأثير (40%)
+  const impactMap: Record<string, number> = { low: 1, medium: 2.5, high: 3.8, critical: 5 };
+  const impactScore = impactMap[impact] ?? 2;
+
+  // 2. حجم الطلبات الشهرية (25%)
+  const vol = avgMonthlyRequests;
+  const volumeScore =
+    vol === 0 ? 1
+    : vol <= 5  ? 1.5
+    : vol <= 15 ? 2.5
+    : vol <= 35 ? 3.2
+    : vol <= 70 ? 4
+    : vol <= 120 ? 4.6
+    : 5;
+
+  // 3. حساسية مستوى الخدمة SLA (20%)
+  const slaScore =
+    !slaHours      ? 1.5
+    : slaHours <= 4  ? 5
+    : slaHours <= 24 ? 4
+    : slaHours <= 72 ? 3
+    : slaHours <= 168 ? 2
+    : 1.5;
+
+  // 4. تنوع القنوات - نطاق الخدمة (15%)
+  const chCount = usedChannels.length;
+  const channelDiversityScore = Math.min(5, 1 + (chCount - 1) * 0.8);
+
+  const raw = impactScore * 0.40 + volumeScore * 0.25 + slaScore * 0.20 + channelDiversityScore * 0.15;
   return Math.min(5, Math.max(1, Math.round(raw * 10) / 10));
 }
 
-/* ============ حساب العبء (التعقيد) ============
-   العبء = مدى صعوبة وتعقيد تنفيذ المسؤولية (0-5)
-   يعتمد على 3 عوامل:
-   1. تعقيد القنوات (1-5): عدد القنوات المستخدمة
-   2. تعقيد الخطوات (1-5): عدد خطوات العمل
-   3. تعقيد التفرعات: وجود شروط وموافقات
-
-   الصيغة: العبء = (قنوات + خطوات + تعقيد) / 3
+/* ============ حساب العبء التشغيلي ============
+   العبء = مدى تعقيد وكثافة تنفيذ المسؤولية (1-5)
+   يعتمد على خمسة محاور:
+   1. تعقيد مسار العمل (35%): عدد الخطوات والتفرعات والشروط
+   2. المدة الزمنية للإنجاز (25%): الوقت المستغرق فعلياً
+   3. تعدد القنوات والأنظمة (20%): عدد الأنظمة المشاركة
+   4. نوع الإجراء (10%): يدوي/نظامي/مختلط
+   5. تعقيد الملاحظات والمتطلبات (10%): اشتراطات خاصة
 */
 function calcBurden(
   usedChannels: string[],
   steps: Responsibility['steps'],
-  _duration: { value: number; unit: string },
-  notes?: string
+  duration: { value: number; unit: string },
+  notes?: string,
+  procedureType?: string
 ): number {
-  void _duration; // duration no longer used
+  // 1. تعقيد مسار العمل (35%)
+  const processSteps   = steps.filter(s => s.cardType === 'process').length;
+  const conditionSteps = steps.filter(s => s.cardType === 'condition').length;
+  const mandatorySteps = steps.filter(s => s.isMandatory).length;
+  const hasApprovals   = steps.some(s => s.actionType === 'موافقة') ? 0.6 : 0;
+  const hasReviews     = steps.some(s => s.actionType === 'مراجعة') ? 0.4 : 0;
+  const hasFollowup    = steps.some(s => s.actionType === 'متابعة') ? 0.3 : 0;
+  const workflowRaw    = 1 + processSteps * 0.35 + conditionSteps * 0.9 + mandatorySteps * 0.2 + hasApprovals + hasReviews + hasFollowup;
+  const workflowScore  = Math.min(5, workflowRaw);
+
+  // 2. المدة الزمنية بالدقائق (25%)
+  let minutes = duration.value;
+  if (duration.unit === 'ساعة') minutes *= 60;
+  else if (duration.unit === 'يوم') minutes *= 480;
+  else if (duration.unit === 'أسبوع') minutes *= 2400;
+  const durationScore =
+    minutes <= 15  ? 1
+    : minutes <= 60  ? 1.8
+    : minutes <= 240 ? 2.8
+    : minutes <= 960 ? 3.8
+    : minutes <= 2880 ? 4.5
+    : 5;
+
+  // 3. تعدد القنوات (20%)
   const chLen = usedChannels.length;
-  const channelScore = chLen >= 7 ? 5 : chLen >= 5 ? 4 : chLen >= 3 ? 3 : chLen >= 2 ? 2 : 1;
+  const channelScore = Math.min(5, 1 + (chLen - 1) * 0.85);
 
-  const workSteps = steps.filter(s => s.cardType !== 'start' && s.cardType !== 'end');
-  const stLen = workSteps.length;
-  let stepScore = stLen >= 9 ? 5 : stLen >= 7 ? 4 : stLen >= 5 ? 3 : stLen >= 3 ? 2 : 1;
+  // 4. نوع الإجراء (10%)
+  const typeMap: Record<string, number> = { 'آلي': 1, 'نظامي': 2, 'نظامي/يدوي': 3.5, 'يدوي': 4.5 };
+  const typeScore = typeMap[procedureType ?? ''] ?? 2.5;
 
-  const hasConditions = workSteps.some(s => s.cardType === 'condition');
-  const hasReviews = workSteps.some(s => s.actionType === 'مراجعة');
-  const hasApprovals = workSteps.some(s => s.actionType === 'موافقة');
-  const hasFollowups = workSteps.some(s => s.actionType === 'متابعة');
-  const complexityBonus = (hasConditions ? 0.5 : 0) + (hasReviews ? 0.3 : 0) + (hasApprovals ? 0.4 : 0) + (hasFollowups ? 0.2 : 0);
-  stepScore = Math.min(5, stepScore + complexityBonus);
+  // 5. تعقيد الملاحظات (10%)
+  const nLen = notes?.length ?? 0;
+  const notesScore = nLen === 0 ? 1 : nLen < 40 ? 2 : nLen < 120 ? 3 : nLen < 250 ? 4 : 5;
 
-  let notesScore = 1;
-  if (notes && notes.length > 50) notesScore = 1.5;
-  if (notes && notes.length > 100) notesScore = 2;
-
-  const raw = (channelScore + stepScore + notesScore) / 3;
+  const raw = workflowScore * 0.35 + durationScore * 0.25 + channelScore * 0.20 + typeScore * 0.10 + notesScore * 0.10;
   return Math.min(5, Math.max(1, Math.round(raw * 10) / 10));
 }
 
 /* ============ حساب الدرجة النهائية ============
-   الدرجة النهائية = تقييم شامل يجمع الوزن والعبء
-   مقياس 1-5: يعكس المستوى الإجمالي للمسؤولية
-   1-2: بسيطة | 2-3: متوسطة | 3-4: معقدة | 4-5: حرجة
-   الصيغة: (الوزن + العبء) ÷ 2
+   الدرجة النهائية = تقييم شامل متوازن يجمع ثلاثة محاور:
+   - الوزن (الأهمية الاستراتيجية): 45%
+   - العبء (التعقيد التشغيلي):      35%
+   - جودة التوثيق والاكتمال:         20%
+
+   مقياس القرار:
+   1.0 - 2.0: مسؤولية بسيطة — تأثير وتعقيد محدودان
+   2.1 - 3.0: مسؤولية متوسطة — تحتاج تخطيطاً منتظماً
+   3.1 - 4.0: مسؤولية معقدة — تتطلب إدارة دقيقة ومتابعة
+   4.1 - 5.0: مسؤولية حرجة — أولوية قصوى ومتابعة مستمرة
 */
-function calcFinalGrade(weight: number, burden: number): number {
-  const raw = (weight + burden) / 2;
+function calcFinalGrade(weight: number, burden: number, completionPct: number): number {
+  const docScore = (completionPct / 100) * 5;
+  const raw = weight * 0.45 + burden * 0.35 + docScore * 0.20;
   return Math.min(5, Math.max(1, Math.round(raw * 10) / 10));
 }
 
@@ -153,10 +201,10 @@ export function enrichResponsibility(r: RawResponsibility): Responsibility {
   // Migrate steps first
   const migratedSteps = migrateOldSteps(r.steps);
   const enrichedR = { ...r, steps: migratedSteps } as Responsibility;
-  const w = calcWeight(r.impact, r.avgMonthlyRequests);
-  const b = calcBurden(r.usedChannels, migratedSteps, r.completionTime.duration, r.notes);
+  const w = calcWeight(r.impact, r.avgMonthlyRequests, r.usedChannels);
+  const b = calcBurden(r.usedChannels, migratedSteps, r.completionTime.duration, r.notes, r.procedureType);
   const c = calcCompletion(enrichedR);
-  const fg = calcFinalGrade(w, b);
+  const fg = calcFinalGrade(w, b, c);
   const now = new Date().toLocaleDateString('ar-SA');
   return {
     ...r,

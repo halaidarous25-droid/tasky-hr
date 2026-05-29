@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeft, FileText, Shield, Clock, ListChecks, BarChart3, Edit2, AlertTriangle, AlertOctagon, TrendingUp, Zap, Award } from 'lucide-react';
+import { ArrowLeft, FileText, Shield, Clock, ListChecks, Edit2, AlertTriangle, AlertOctagon, TrendingUp, Zap } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
 import { IMPACT_DATA } from '@/data/constants';
 import ProgressRing from '@/components/ProgressRing';
@@ -28,94 +28,200 @@ export default function ViewPage() {
   const imp = IMPACT_DATA[r.impact] || { label: '', color: '', score: 0 };
   const ImpIcon = impactIcons[r.impact]?.icon || Zap;
 
-  // Weight breakdown
-  let volumeScore = 1;
-  if (r.avgMonthlyRequests >= 101) volumeScore = 5;
-  else if (r.avgMonthlyRequests >= 61) volumeScore = 4;
-  else if (r.avgMonthlyRequests >= 31) volumeScore = 3;
-  else if (r.avgMonthlyRequests >= 11) volumeScore = 2;
-  else if (r.avgMonthlyRequests >= 1) volumeScore = 1;
-
-  // Burden breakdown
-  const chLen = r.usedChannels.length;
-  const channelScore = chLen >= 7 ? 5 : chLen >= 5 ? 4 : chLen >= 3 ? 3 : chLen >= 2 ? 2 : 1;
-  const stLen = r.steps.length;
-  const stepScore = stLen >= 9 ? 5 : stLen >= 7 ? 4 : stLen >= 5 ? 3 : stLen >= 3 ? 2 : 1;
-  let dm = 0;
-  if (r.completionTime.duration.unit === 'دقيقة') dm = r.completionTime.duration.value;
-  else if (r.completionTime.duration.unit === 'ساعة') dm = r.completionTime.duration.value * 60;
-  else if (r.completionTime.duration.unit === 'يوم') dm = r.completionTime.duration.value * 480;
-  const durationScore = dm >= 2880 ? 5 : dm >= 1440 ? 4 : dm >= 480 ? 3 : dm >= 120 ? 2 : dm >= 30 ? 1.5 : 1;
-
   const handlePrintPDF = () => {
     if (!printRef.current) return;
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
-    const content = printRef.current.innerHTML;
     const now = new Date().toLocaleDateString('ar-SA');
+
+    // Build sections manually for a professional PDF output
+    const stepsRows = r.steps.map((s, i) => `
+      <tr>
+        <td class="num">${i + 1}</td>
+        <td><strong>${s.name || '—'}</strong></td>
+        <td>${s.description || '—'}</td>
+        <td>${s.channel || '—'}</td>
+        <td>${s.actionType || '—'}</td>
+        ${s.isMandatory !== undefined ? `<td style="text-align:center">${s.isMandatory ? '✓' : '—'}</td>` : '<td>—</td>'}
+      </tr>`).join('');
+
+    const reviewSection = r.needsReview
+      ? `<div class="info-row"><span class="info-label">جهات المراجعة:</span><span class="info-value">${r.reviewers.join('، ')}</span></div>` : '';
+    const approvalSection = r.needsApproval
+      ? `<div class="info-row"><span class="info-label">جهات الاعتماد:</span><span class="info-value">${r.approvers.join('، ')}</span></div>` : '';
+    const followUpSection = r.needsFollowUp
+      ? `<div class="info-row"><span class="info-label">آليات المتابعة:</span><span class="info-value">${r.followUpMethods.join('، ')}</span></div>` : '';
+    const notesSection = r.notes
+      ? `<div class="info-row full"><span class="info-label">ملاحظات وإشتراطات خاصة:</span><span class="info-value" style="margin-top:4px;display:block">${r.notes}</span></div>` : '';
+
     printWindow.document.write(`<!DOCTYPE html>
 <html dir="rtl" lang="ar">
-<head><meta charset="UTF-8"><title>تقرير إجراء - ${r.name}</title>
+<head><meta charset="UTF-8"><title>وثيقة إجراء - ${r.name}</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap');
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Cairo', sans-serif; background: #fff; color: #1e293b; padding: 40px; line-height: 1.8; }
-  .header { text-align: center; border-bottom: 4px double #059669; padding-bottom: 25px; margin-bottom: 35px; }
-  .header h1 { color: #059669; font-size: 26px; font-weight: 800; margin-bottom: 8px; }
-  .header .subtitle { color: #64748b; font-size: 14px; }
-  .header .meta { display: flex; justify-content: center; gap: 30px; margin-top: 15px; font-size: 13px; color: #475569; }
-  .section { margin-bottom: 30px; page-break-inside: avoid; }
-  .section-title { color: #059669; font-weight: 800; font-size: 17px; border-right: 5px solid #059669; padding-right: 12px; margin-bottom: 18px; display: flex; align-items: center; gap: 8px; }
-  .section-title svg, .section-title .icon { width: 20px; height: 20px; }
-  .info-row { display: flex; padding: 8px 0; border-bottom: 1px solid #f1f5f9; }
-  .info-row.full { flex-direction: column; }
-  .info-label { color: #64748b; font-size: 13px; font-weight: 600; min-width: 140px; }
-  .info-value { font-weight: 700; font-size: 14px; color: #0f172a; flex: 1; }
-  .steps-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-  .steps-table th { background: linear-gradient(135deg, #059669, #0d9488); color: white; padding: 12px; text-align: right; font-size: 13px; font-weight: 700; }
-  .steps-table td { border-bottom: 1px solid #e2e8f0; padding: 12px; font-size: 13px; }
-  .steps-table td.num { background: #ecfdf5; color: #059669; font-weight: 800; text-align: center; width: 40px; }
-  .score-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
-  .score-card { background: linear-gradient(135deg, #f8fafc, #f1f5f9); border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px; text-align: center; }
-  .score-card .score-value { font-size: 28px; font-weight: 900; color: #059669; }
-  .score-card .score-label { font-size: 12px; color: #64748b; margin-top: 5px; }
-  .score-card.burden .score-value { color: #d97706; }
-  .detail-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 15px; margin-top: 12px; }
-  .detail-box h5 { font-size: 13px; color: #059669; font-weight: 700; margin-bottom: 10px; }
-  .detail-box.burden h5 { color: #d97706; }
-  .detail-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; }
-  .detail-row .label { color: #64748b; }
-  .detail-row .value { font-weight: 700; }
-  .detail-row.total { border-top: 1px solid #e2e8f0; padding-top: 8px; margin-top: 8px; }
-  .detail-row.total .label, .detail-row.total .value { color: #059669; font-weight: 800; }
-  .detail-row.total.burden .label, .detail-row.total.burden .value { color: #d97706; }
-  .badge { display: inline-block; padding: 5px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; }
-  .badge-green { background: #d1fae5; color: #065f46; }
-  .badge-amber { background: #fef3c7; color: #92400e; }
-  .badge-red { background: #fee2e2; color: #991b1b; }
-  .badge-blue { background: #dbeafe; color: #1e40af; }
-  .badge-gray { background: #f1f5f9; color: #475569; }
-  .goal-box { background: linear-gradient(135deg, #ecfdf5, #d1fae5); border: 1px solid #a7f3d0; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
-  .goal-box h3 { color: #065f46; font-size: 15px; font-weight: 800; margin-bottom: 8px; }
+  body { font-family: 'Cairo', sans-serif; background: #fff; color: #1e293b; padding: 48px 52px; line-height: 1.9; font-size: 13px; }
+
+  /* ── Header ── */
+  .header { text-align: center; padding-bottom: 28px; margin-bottom: 36px; border-bottom: 3px solid #059669; }
+  .header .logo-line { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 10px; }
+  .header .logo-box { width: 52px; height: 52px; background: linear-gradient(135deg, #059669, #0d9488); border-radius: 12px; display: flex; align-items: center; justify-content: center; }
+  .header .logo-box span { color: #fff; font-size: 22px; font-weight: 900; }
+  .header h1 { color: #059669; font-size: 24px; font-weight: 900; letter-spacing: -0.5px; margin-bottom: 4px; }
+  .header .doc-title { font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 14px; }
+  .header .meta-row { display: flex; justify-content: center; gap: 36px; font-size: 12px; color: #475569; flex-wrap: wrap; }
+  .header .meta-row span strong { color: #0f172a; }
+
+  /* ── Sections ── */
+  .section { margin-bottom: 32px; page-break-inside: avoid; }
+  .section-title { color: #059669; font-weight: 900; font-size: 15px; border-right: 5px solid #059669; padding: 8px 14px; margin-bottom: 16px; background: #f0fdf4; border-radius: 0 8px 8px 0; }
+
+  /* ── Info rows ── */
+  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+  .info-row { display: flex; align-items: flex-start; gap: 8px; padding: 9px 12px; border-bottom: 1px solid #f1f5f9; }
+  .info-row.full { grid-column: span 2; flex-direction: column; }
+  .info-label { color: #64748b; font-size: 12px; font-weight: 700; min-width: 150px; white-space: nowrap; }
+  .info-value { font-weight: 600; font-size: 13px; color: #0f172a; flex: 1; }
+
+  /* ── Steps table ── */
+  .steps-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12.5px; }
+  .steps-table thead tr { background: linear-gradient(135deg, #059669, #0d9488); }
+  .steps-table th { color: white; padding: 11px 12px; text-align: right; font-weight: 700; }
+  .steps-table tr:nth-child(even) td { background: #f8fafc; }
+  .steps-table td { border-bottom: 1px solid #e2e8f0; padding: 10px 12px; vertical-align: top; }
+  .steps-table td.num { background: #ecfdf5; color: #059669; font-weight: 900; text-align: center; width: 36px; }
+
+  /* ── Goal box ── */
+  .goal-box { background: linear-gradient(135deg, #ecfdf5, #d1fae5); border: 1px solid #a7f3d0; border-radius: 12px; padding: 20px 24px; margin-bottom: 28px; }
+  .goal-box h3 { color: #065f46; font-size: 14px; font-weight: 900; margin-bottom: 8px; }
   .goal-box p { color: #047857; font-size: 13px; line-height: 2; }
-  .print-only { display: block !important; }
-  @media print { body { padding: 0; } .no-print { display: none !important; } .section { page-break-inside: avoid; } }
+
+  /* ── Badges ── */
+  .badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+  .badge-green  { background: #d1fae5; color: #065f46; }
+  .badge-amber  { background: #fef3c7; color: #92400e; }
+  .badge-red    { background: #fee2e2; color: #991b1b; }
+  .badge-blue   { background: #dbeafe; color: #1e40af; }
+  .badge-gray   { background: #f1f5f9; color: #475569; }
+
+  /* ── KPI box ── */
+  .kpi-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 18px; margin-top: 8px; }
+  .kpi-box .kpi-label { font-size: 11px; color: #64748b; font-weight: 700; margin-bottom: 4px; }
+  .kpi-box .kpi-value { font-size: 14px; color: #059669; font-weight: 800; }
+
+  /* ── Footer ── */
+  .footer { margin-top: 40px; padding-top: 20px; border-top: 2px solid #e2e8f0; display: flex; justify-content: space-between; align-items: flex-end; font-size: 11px; color: #94a3b8; }
+  .footer .sig-box { border-top: 1px solid #cbd5e1; width: 180px; text-align: center; padding-top: 6px; }
+
+  @media print { body { padding: 0; } .section { page-break-inside: avoid; } }
 </style>
 </head>
 <body>
+
+  <!-- HEADER -->
   <div class="header">
-    <h1>تقرير إجراءات وأنظمة المسؤولية</h1>
-    <p class="subtitle">Departmental Policy & Procedures System</p>
-    <div class="meta">
-      <span>رقم الملف: <strong>RESP-${String(r.id).padStart(4, '0')}</strong></span>
-      <span>التاريخ: <strong>${now}</strong></span>
-      <span>الحالة: <strong style="color:#059669">${r.documentationStatus}</strong></span>
+    <div class="logo-line">
+      <div class="logo-box"><span>HR</span></div>
+    </div>
+    <h1>نظام إدارة المسؤوليات والإجراءات</h1>
+    <div class="doc-title">وثيقة توصيف الإجراء الوظيفي</div>
+    <div class="meta-row">
+      <span>رقم الوثيقة: <strong>RESP-${String(r.id).padStart(4, '0')}</strong></span>
+      <span>تاريخ الإصدار: <strong>${now}</strong></span>
+      <span>حالة التوثيق: <strong style="color:#059669">${r.documentationStatus}</strong></span>
+      <span>التأثير: <strong>${imp.label}</strong></span>
     </div>
   </div>
-  ${content}
-  <div style="margin-top:40px;padding-top:20px;border-top:1px solid #e2e8f0;text-align:center;font-size:12px;color:#94a3b8;">
-    تم إنشاء هذا التقرير بواسطة نظام إدارة المسؤوليات | ${now}
+
+  <!-- GOAL -->
+  <div class="goal-box">
+    <h3>هدف الإجراء وأهميته</h3>
+    <p>${r.description}</p>
   </div>
+
+  <!-- SECTION 1: بيانات الإجراء الأساسية -->
+  <div class="section">
+    <div class="section-title">أولاً: بيانات الإجراء الأساسية</div>
+    <div class="info-grid">
+      <div class="info-row"><span class="info-label">اسم الإجراء:</span><span class="info-value">${r.name}</span></div>
+      <div class="info-row"><span class="info-label">تصنيف الإجراء:</span><span class="info-value">${r.category}${r.categoryDescription ? ' — ' + r.categoryDescription : ''}</span></div>
+      <div class="info-row"><span class="info-label">نوع الإجراء:</span><span class="info-value">${r.procedureType}</span></div>
+      <div class="info-row"><span class="info-label">قناة استقبال الطلب:</span><span class="info-value">${r.requestChannel}</span></div>
+      <div class="info-row"><span class="info-label">الأنظمة والقنوات المستخدمة:</span><span class="info-value">${r.usedChannels.join('، ')}</span></div>
+      <div class="info-row"><span class="info-label">حالة التوثيق:</span><span class="info-value">${r.documentationStatus}</span></div>
+    </div>
+  </div>
+
+  <!-- SECTION 2: المؤشرات التشغيلية -->
+  <div class="section">
+    <div class="section-title">ثانياً: المؤشرات التشغيلية والأداء</div>
+    <div class="info-grid">
+      <div class="info-row"><span class="info-label">المدة الزمنية للإنجاز:</span><span class="info-value">${r.completionTime.duration.value} ${r.completionTime.duration.unit} (${r.completionTime.type})</span></div>
+      <div class="info-row"><span class="info-label">متوسط الطلبات الشهرية:</span><span class="info-value">${r.avgMonthlyRequests} طلب / شهر</span></div>
+      <div class="info-row"><span class="info-label">مستوى التأثير التنظيمي:</span><span class="info-value">${imp.label}</span></div>
+      <div class="info-row"><span class="info-label">عدد خطوات الإجراء:</span><span class="info-value">${r.steps.length} خطوة</span></div>
+    </div>
+    <div class="kpi-box">
+      <div class="kpi-label">مؤشر الأداء الرئيسي (KPI):</div>
+      <div class="kpi-value">${r.kpi || 'لم يُحدد'}</div>
+    </div>
+    ${notesSection}
+  </div>
+
+  <!-- SECTION 3: خطوات تنفيذ الإجراء -->
+  <div class="section">
+    <div class="section-title">ثالثاً: خطوات تنفيذ الإجراء</div>
+    <p style="color:#475569;font-size:12px;margin-bottom:12px;">يوضح الجدول التالي التسلسل الزمني لخطوات تنفيذ الإجراء، مع تحديد القناة التنفيذية ونوع الإجراء في كل مرحلة.</p>
+    <table class="steps-table">
+      <thead>
+        <tr>
+          <th style="width:36px">#</th>
+          <th>الخطوة</th>
+          <th>وصف الإجراء</th>
+          <th>القناة / النظام</th>
+          <th>نوع الإجراء</th>
+          <th style="width:70px;text-align:center">إلزامي</th>
+        </tr>
+      </thead>
+      <tbody>${stepsRows}</tbody>
+    </table>
+  </div>
+
+  <!-- SECTION 4: المراجعة والاعتماد -->
+  <div class="section">
+    <div class="section-title">رابعاً: مسار المراجعة والاعتماد</div>
+    <p style="color:#475569;font-size:12px;margin-bottom:12px;">تُحدد هذه الفقرة الجهات المختصة بمراجعة واعتماد ومتابعة تنفيذ الإجراء ضمن الهيكل التنظيمي المعتمد.</p>
+    <div class="info-grid">
+      <div class="info-row">
+        <span class="info-label">يستلزم مراجعة رسمية:</span>
+        <span class="info-value">${r.needsReview ? 'نعم' : 'لا'}</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">يستلزم اعتماداً رسمياً:</span>
+        <span class="info-value">${r.needsApproval ? 'نعم' : 'لا'}</span>
+      </div>
+      ${reviewSection}
+      ${approvalSection}
+      <div class="info-row">
+        <span class="info-label">يستلزم متابعة دورية:</span>
+        <span class="info-value">${r.needsFollowUp ? 'نعم' : 'لا'}</span>
+      </div>
+      ${followUpSection}
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <div>
+      <div>تم إعداد هذه الوثيقة بواسطة نظام إدارة المسؤوليات</div>
+      <div>تاريخ الطباعة: ${now} | رقم المرجع: RESP-${String(r.id).padStart(4, '0')}</div>
+    </div>
+    <div style="display:flex;gap:40px">
+      <div class="sig-box">المراجع</div>
+      <div class="sig-box">المعتمد</div>
+    </div>
+  </div>
+
 </body>
 </html>`);
     printWindow.document.close();
@@ -149,8 +255,6 @@ export default function ViewPage() {
               <span className="text-slate-400 text-sm">رقم: <strong className="text-emerald-400">RESP-{String(r.id).padStart(4, '0')}</strong></span>
               <span className="text-slate-700">|</span>
               <span className="text-slate-400 text-sm">التاريخ: <strong className="text-white">{new Date().toLocaleDateString('ar-SA')}</strong></span>
-              <span className="text-slate-700">|</span>
-              <span className="text-slate-400 text-sm">الصاحب: <strong className="text-white">{r.ownerName}</strong></span>
             </div>
             <div className="mt-3 flex items-center justify-center gap-2 flex-wrap">
               <StatusBadge status={r.documentationStatus} />
@@ -172,18 +276,9 @@ export default function ViewPage() {
             <StatusBadge status={r.documentationStatus} />
           </div>
 
-          {/* Goal section for PDF */}
-          <div className="hidden print-only" style={{ display: 'none' }}>
-            <div className="goal-box">
-              <h3>هدف المسؤولية</h3>
-              <p>{r.description}</p>
-            </div>
-          </div>
-
           {/* Info Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <InfoSection title="البيانات الأساسية" icon={FileText}>
-              <InfoRow label="الصاحب" value={r.ownerName} />
               <InfoRow label="التصنيف" value={r.category} />
               {r.categoryDescription && <InfoRow label="وصف التصنيف" value={r.categoryDescription} />}
               <InfoRow label="الوصف" value={r.description} full />
@@ -226,56 +321,6 @@ export default function ViewPage() {
               <InfoRow label="التأثير" value={imp.label} />
               <InfoRow label="KPI" value={r.kpi} />
               {r.notes && <InfoRow label="ملاحظات" value={r.notes} full />}
-            </InfoSection>
-
-            <InfoSection title="التحليل والتقييم" icon={BarChart3}>
-              <div className="grid grid-cols-3 gap-3 mb-4">
-                <div className="bg-slate-800/50 rounded-lg p-3 text-center">
-                  <div className="text-emerald-400 font-black text-xl">{r.weight}</div>
-                  <div className="text-slate-500 text-xs font-medium mt-1">الوزن (من 5)</div>
-                </div>
-                <div className="bg-slate-800/50 rounded-lg p-3 text-center">
-                  <div className="text-amber-400 font-black text-xl">{r.burden}</div>
-                  <div className="text-slate-500 text-xs font-medium mt-1">العبء (من 5)</div>
-                </div>
-                <div className="bg-emerald-600/10 border border-emerald-600/30 rounded-lg p-3 text-center">
-                  <div className="text-emerald-400 font-black text-xl flex items-center justify-center gap-1"><Award className="w-5 h-5" />{r.finalGrade}</div>
-                  <div className="text-emerald-500 text-xs font-medium mt-1">الدرجة النهائية (من 5)</div>
-                </div>
-              </div>
-
-              <div className="bg-slate-800/30 rounded-lg p-3 mb-3">
-                <h5 className="text-emerald-400 font-bold text-xs mb-2">تفاصيل الوزن</h5>
-                <div className="space-y-1 text-xs">
-                  <div className="flex justify-between"><span className="text-slate-500">درجة التأثير ({imp.label}):</span><span className="text-white">{imp.score} من 4</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">حجم العمل ({r.avgMonthlyRequests} طلب/شهر):</span><span className="text-white">{volumeScore} من 5</span></div>
-                  <div className="flex justify-between border-t border-slate-700/50 pt-1 mt-1"><span className="text-emerald-400 font-bold">الوزن النهائي:</span><span className="text-emerald-400 font-bold">{r.weight} من 5</span></div>
-                </div>
-                <p className="text-slate-500 text-[10px] mt-2">الوزن يعكس أهمية المسؤولية. كلما ارتفع، زاد تأثيرها على المنظمة.</p>
-              </div>
-
-              <div className="bg-slate-800/30 rounded-lg p-3">
-                <h5 className="text-amber-400 font-bold text-xs mb-2">تفاصيل العبء</h5>
-                <div className="space-y-1 text-xs">
-                  <div className="flex justify-between"><span className="text-slate-500">تعقيد القنوات ({r.usedChannels.length}):</span><span className="text-white">{channelScore} من 5</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">تعقيد الخطوات ({r.steps.length}):</span><span className="text-white">{stepScore} من 5</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">تعقيد المدة ({r.completionTime.duration.value} {r.completionTime.duration.unit}):</span><span className="text-white">{durationScore} من 5</span></div>
-                  <div className="flex justify-between border-t border-slate-700/50 pt-1 mt-1"><span className="text-amber-400 font-bold">العبء النهائي:</span><span className="text-amber-400 font-bold">{r.burden} من 5</span></div>
-                </div>
-                <p className="text-slate-500 text-[10px] mt-2">العبء يعكس صعوبة التنفيذ. كلما ارتفع، زاد الجهد المطلوب.</p>
-              </div>
-
-              <div className="bg-emerald-600/10 border border-emerald-600/30 rounded-lg p-3 mt-3">
-                <h5 className="text-emerald-400 font-bold text-xs mb-2 flex items-center gap-1"><Award className="w-3.5 h-3.5" />الدرجة النهائية</h5>
-                <div className="space-y-1 text-xs">
-                  <div className="flex justify-between"><span className="text-slate-500">الوزن:</span><span className="text-white">{r.weight} من 5</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">العبء:</span><span className="text-white">{r.burden} من 5</span></div>
-                  <div className="flex justify-between border-t border-emerald-700/30 pt-1 mt-1"><span className="text-emerald-400 font-bold">الدرجة النهائية:</span><span className="text-emerald-400 font-bold">{r.finalGrade} من 5</span></div>
-                </div>
-                <p className="text-slate-500 text-[10px] mt-2">
-                  {r.finalGrade <= 2 ? 'مسؤولية بسيطة: تأثير وتعقيد محدودان.' : r.finalGrade <= 3 ? 'مسؤولية متوسطة: تحتاج لاهتمام وتخطيط.' : r.finalGrade <= 4 ? 'مسؤولية معقدة: تتطلب جهد كبير وإدارة دقيقة.' : 'مسؤولية حرجة جداً: أولوية قصوى وتحتاج متابعة مستمرة.'}
-                </p>
-              </div>
             </InfoSection>
           </div>
 
